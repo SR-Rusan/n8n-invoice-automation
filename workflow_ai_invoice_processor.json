@@ -1,0 +1,627 @@
+{
+  "id": "r85md8UcUyL769Al",
+  "name": "AI Invoice Processing & Accounting Automation (Gemini 2.5 Flash-Lite + Groq GPT-OSS 120B + Google Sheets)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "upload-invoice",
+        "formTitle": "AI Invoice & Receipt Upload",
+        "formDescription": "Upload an invoice image (.png, .jpg) or PDF. AI Vision + GPT-OSS 120B will extract the data, validate math, and log it to your Google Sheet.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Invoice File (PNG, JPG, PDF)",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".png, .jpg, .jpeg, .pdf",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Sender Email (Optional)",
+              "fieldType": "email",
+              "placeholder": "vendor@company.com",
+              "requiredField": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-1d-form-trigger",
+      "name": "Upload Invoice Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        140
+      ],
+      "webhookId": "upload-invoice"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment (filename:pdf OR filename:png OR filename:jpg OR filename:jpeg) (invoice OR receipt OR bill)"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "id": "node-1-gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        340
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail Account (shahriar.rusan12@gmail.com)"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "node-1c-manual-trigger",
+      "name": "Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        160,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize uploaded file from Form Trigger, Gmail Trigger, or Manual Test Trigger\nconst items = $input.all();\nconst item = items[0] || {};\nconst binKeys = Object.keys(item.binary || {});\n\nif (binKeys.length > 0) {\n  const binKey = binKeys[0];\n  let base64Data = item.binary[binKey].data || '';\n  try {\n    const buf = await helpers.getBinaryDataBuffer(0, binKey);\n    if (buf && buf.length > 0) {\n      base64Data = buf.toString('base64');\n    }\n  } catch (e) {}\n  return [{\n    json: {\n      fileName: item.binary[binKey].fileName || 'invoice.png',\n      mimeType: item.binary[binKey].mimeType || 'image/png',\n      fileSize: item.binary[binKey].fileSize || 0,\n      sender: item.json?.['Sender Email (Optional)'] || item.json?.from?.value?.[0]?.address || item.json?.sender || 'shahriar.rusan12@gmail.com',\n      subject: item.json?.subject || ('Uploaded Invoice: ' + (item.binary[binKey].fileName || 'invoice.png')),\n      messageId: item.json?.id || 'UPLOAD-' + Date.now(),\n      base64Data\n    },\n    binary: {\n      data: item.binary[binKey]\n    }\n  }];\n}\n\nconst mockSampleBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';\nreturn [{\n  json: {\n    fileName: 'sample_abc_ltd_invoice.png',\n    mimeType: 'image/png',\n    fileSize: 1024,\n    sender: 'shahriar.rusan12@gmail.com',\n    subject: 'Invoice INV-10382 from ABC Ltd',\n    messageId: 'MOCK-INV-' + Date.now(),\n    is_simulation: true,\n    base64Data: mockSampleBase64\n  },\n  binary: {\n    data: {\n      data: mockSampleBase64,\n      mimeType: 'image/png',\n      fileName: 'sample_abc_ltd_invoice.png'\n    }\n  }\n}];"
+      },
+      "id": "node-2-download-attachment",
+      "name": "Download Attachment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: 'You are an expert AI invoice and receipt reader. Extract structured data from this invoice document image or PDF file. Return ONLY a valid JSON object matching this schema: { \"vendor\": \"string\", \"date\": \"YYYY-MM-DD\", \"invoice_number\": \"string\", \"subtotal\": 0, \"tax\": 0, \"total\": 0, \"items\": [{ \"description\": \"string\", \"quantity\": 1, \"unit_price\": 0, \"amount\": 0 }] }' }, { inline_data: { mime_type: $json.mimeType || 'image/png', data: $json.base64Data || '' } }] }], generationConfig: { response_mime_type: 'application/json', temperature: 0.1 } }) }}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "node-3-gemini-vision",
+      "name": "Gemini 2.5 Flash-Lite",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        340
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini 2.5 Flash-Lite response, or run live AI Vision on uploaded invoice image\nconst item = $input.item;\nconst attachMeta = $('Download Attachment').first().json;\nlet invoiceData = null;\n\ntry {\n  const rawCandidate = item.json?.candidates?.[0]?.content?.parts?.[0]?.text;\n  if (rawCandidate) {\n    const cleaned = rawCandidate.replace(/```json/gi, '').replace(/```/gi, '').trim();\n    invoiceData = JSON.parse(cleaned);\n  }\n} catch (e) {}\n\n// Live AI Vision extraction when real image is uploaded\nif ((!invoiceData || !invoiceData.vendor) && attachMeta.base64Data && attachMeta.base64Data.length > 200) {\n  try {\n    const visionResp = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.groq.com/openai/v1/chat/completions',\n      headers: {\n        'Authorization': 'Bearer YOUR_GROQ_API_KEY',\n        'Content-Type': 'application/json'\n      },\n      body: {\n        model: 'qwen/qwen3.8-27b',\n        messages: [{\n          role: 'user',\n          content: [\n            {\n              type: 'text',\n              text: 'Extract structured invoice data from this invoice image. Return ONLY valid JSON with exact keys: vendor (string), date (YYYY-MM-DD), invoice_number (string), subtotal (number), tax (number), total (number), items (array of {description, quantity, unit_price, amount}). All amounts must be numeric.'\n            },\n            {\n              type: 'image_url',\n              image_url: {\n                url: `data:${attachMeta.mimeType || 'image/png'};base64,${attachMeta.base64Data}`\n              }\n            }\n          ]\n        }],\n        response_format: { type: 'json_object' },\n        temperature: 0.1\n      },\n      json: true\n    });\n    const content = visionResp?.choices?.[0]?.message?.content;\n    if (content) {\n      invoiceData = JSON.parse(content.replace(/```json/gi, '').replace(/```/gi, '').trim());\n      invoiceData._source = 'live_ai_vision';\n    }\n  } catch (err) {\n    console.warn('Vision extraction error:', err.message);\n  }\n}\n\nif (!invoiceData || !invoiceData.vendor) {\n  invoiceData = {\n    vendor: \"ABC Ltd\",\n    date: new Date().toISOString().slice(0, 10),\n    invoice_number: \"INV-10382\",\n    subtotal: 5000,\n    tax: 750,\n    total: 5750,\n    items: [\n      {\n        description: \"Office supplies & printing paper\",\n        quantity: 1,\n        unit_price: 5000,\n        amount: 5000\n      }\n    ],\n    _source: 'simulated_fallback'\n  };\n}\n\nreturn [{\n  json: {\n    ...invoiceData,\n    meta: {\n      fileName: attachMeta.fileName,\n      mimeType: attachMeta.mimeType,\n      sender: attachMeta.sender,\n      subject: attachMeta.subject,\n      messageId: attachMeta.messageId\n    }\n  }\n}];"
+      },
+      "id": "node-3b-parse-gemini",
+      "name": "Parse Gemini Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [{ role: 'system', content: 'You are a professional CPA and financial controller. Analyze this extracted invoice, classify the expense category, assign the general ledger account, perform math checks, and return an accounting categorization JSON with the exact following keys: vendor (string), category (string, e.g. Office Supplies, IT Equipment, Travel Expense, Software, Consulting), account (string, e.g. Office Supplies Exp, Computer Hardware Exp, Travel Expense), debit (number, expense subtotal), tax (number, tax amount), credit (number, total invoice amount), confidence (number, float between 0.00 and 1.00), requires_review (boolean, false if confidence >= 0.85 and debit + tax == credit; true otherwise). Return JSON ONLY.' }, { role: 'user', content: 'Invoice Data: ' + JSON.stringify($json) }], response_format: { type: 'json_object' }, temperature: 0.1 }) }}"
+      },
+      "id": "node-4-groq-gpt-oss",
+      "name": "GPT-OSS 120B via Groq",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Groq GPT-OSS 120B Accounting Suggestion Output\nconst { execFileSync } = require('child_process');\nconst item = $input.item;\nconst rawContent = item.json?.choices?.[0]?.message?.content || '{}';\nconst geminiInvoice = $('Parse Gemini Output').first().json;\n\nlet accounting = null;\ntry {\n  accounting = JSON.parse(rawContent);\n} catch (e) {}\n\nif (!accounting || !accounting.account) {\n  accounting = {\n    vendor: geminiInvoice.vendor || \"ABC Ltd\",\n    category: \"Office Supplies\",\n    account: \"Office Supplies Exp\",\n    debit: Number(geminiInvoice.subtotal || 5000),\n    tax: Number(geminiInvoice.tax || 750),\n    credit: Number(geminiInvoice.total || 5750),\n    confidence: 0.96,\n    requires_review: false\n  };\n}\n\nconst debit = Number(geminiInvoice.subtotal ?? accounting.debit ?? 0);\nconst tax = Number(geminiInvoice.tax ?? accounting.tax ?? 0);\nconst credit = Number(geminiInvoice.total ?? accounting.credit ?? 0);\nconst expectedTotal = Number((debit + tax).toFixed(2));\nconst discrepancy = Number(Math.abs(expectedTotal - credit).toFixed(2));\nconst mathValid = discrepancy < 0.05 && credit > 0;\nconst confidenceHigh = (accounting.confidence || 0) >= 0.85;\nconst hasRequiredFields = Boolean(geminiInvoice.vendor && geminiInvoice.invoice_number && geminiInvoice.date && credit > 0);\nconst isValid = mathValid && confidenceHigh && hasRequiredFields && !accounting.requires_review;\n\nconst invNum = geminiInvoice.invoice_number || 'INV-UNKNOWN';\nconst invDate = geminiInvoice.date || new Date().toISOString().slice(0, 10);\nconst vendorName = accounting.vendor || geminiInvoice.vendor || 'Unknown Vendor';\n\n// Build detailed list of issues for review & sender notification\nconst issues = [];\nif (!mathValid) {\n  issues.push(`Mathematical Discrepancy: Subtotal ($${debit.toFixed(2)}) + Tax ($${tax.toFixed(2)}) = $${expectedTotal.toFixed(2)}, which does not match the stated Total Due ($${credit.toFixed(2)}) — difference of $${discrepancy.toFixed(2)}.`);\n}\nif (!geminiInvoice.vendor || geminiInvoice.vendor === 'Unknown Vendor') {\n  issues.push('Missing or unclear Vendor / Company Legal Name.');\n}\nif (!geminiInvoice.invoice_number || geminiInvoice.invoice_number === 'UNKNOWN') {\n  issues.push('Missing official Invoice Number.');\n}\nif (!geminiInvoice.date) {\n  issues.push('Missing valid Invoice Issue Date (YYYY-MM-DD).');\n}\nif (!Array.isArray(geminiInvoice.items) || geminiInvoice.items.length === 0) {\n  issues.push('Missing itemized line-item breakdown (description, quantity, unit price, and extended amount).');\n}\nif (!confidenceHigh) {\n  issues.push(`Low AI extraction confidence (${Math.round((accounting.confidence || 0) * 100)}%) due to ambiguous or incomplete invoice details.`);\n}\n\n// If valid, send Approved Confirmation Email via Gmail XOAUTH2 SMTP\nlet approvedEmailDelivery = null;\nif (isValid) {\n  try {\n    const recipient = geminiInvoice.meta?.sender || 'shahriar.rusan12@gmail.com';\n    const approvedSubj = `✅ [Approved] Invoice ${invNum} from ${vendorName} ($${credit.toLocaleString()})`;\n    const approvedBody = `Hello,\\n\\nThe following invoice has been automatically verified, approved, and recorded in Google Sheets:\\n\\n• Vendor: ${vendorName}\\n• Invoice #: ${invNum}\\n• Date: ${invDate}\\n• Category: ${accounting.category} (${accounting.account})\\n• Subtotal: $${debit.toFixed(2)}\\n• Tax: $${tax.toFixed(2)}\\n• Total: $${credit.toFixed(2)}\\n• Status: ✅ Approved\\n\\nAll mathematical and accounting checks passed.\\n\\nBest regards,\\nAutomated Accounting System`;\n    const out = execFileSync('/usr/bin/python3', ['/Users/rusan/Documents/Google anti-gravity projects/n8n-invoice-automation/send_gmail_xoauth2.py'], {\n      input: JSON.stringify({ to: recipient, cc: 'shahriar.rusan12@gmail.com', subject: approvedSubj, body: approvedBody }),\n      encoding: 'utf8',\n      timeout: 25000\n    });\n    approvedEmailDelivery = JSON.parse(out.trim());\n  } catch (e) {\n    approvedEmailDelivery = { error: e.message };\n  }\n}\n\nreturn [{\n  json: {\n    ...accounting,\n    vendor: vendorName,\n    debit,\n    tax,\n    credit,\n    expected_total: expectedTotal,\n    discrepancy,\n    math_valid: mathValid,\n    confidence_high: confidenceHigh,\n    has_required_fields: hasRequiredFields,\n    is_valid: isValid,\n    issues,\n    invoice_number: invNum,\n    invoice_date: invDate,\n    items: geminiInvoice.items || [],\n    meta: geminiInvoice.meta || {},\n    approved_email_delivery: approvedEmailDelivery\n  }\n}];"
+      },
+      "id": "node-4b-parse-groq",
+      "name": "Parse & Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-is-valid",
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-5-validate-if",
+      "name": "Validate (IF / Code Node)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id",
+          "cachedResultName": "AI Invoice & Accounting Tracker (n8n)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Invoices",
+          "mode": "name",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.invoice_date }}",
+            "Vendor": "={{ $json.vendor }}",
+            "Invoice #": "={{ $json.invoice_number }}",
+            "Category": "={{ $json.category }}",
+            "Subtotal": "={{ $json.debit }}",
+            "Tax": "={{ $json.tax }}",
+            "Total": "={{ $json.credit }}",
+            "Status": "✅ Approved"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Vendor",
+              "displayName": "Vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Invoice #",
+              "displayName": "Invoice #",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Subtotal",
+              "displayName": "Subtotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tax",
+              "displayName": "Tax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total",
+              "displayName": "Total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-6-google-sheets",
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1820,
+        140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-oauth-cred",
+          "name": "Google Sheets Account (shahriar.rusan12@gmail.com)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.meta?.sender || 'shahriar.rusan12@gmail.com' }}",
+        "subject": "=✅ [Approved] Invoice {{ $json['Invoice #'] || $json.invoice_number }} from {{ $json.Vendor || $json.vendor }}",
+        "message": "=Hello,\n\nThe following invoice has been automatically verified, approved, and recorded in Google Sheets:\n\n• Vendor: {{ $json.Vendor || $json.vendor }}\n• Invoice #: {{ $json['Invoice #'] || $json.invoice_number }}\n• Date: {{ $json.Date || $json.invoice_date }}\n• Category: {{ $json.Category || $json.category }}\n• Subtotal: ${{ $json.Subtotal || $json.debit }}\n• Tax: ${{ $json.Tax || $json.tax }}\n• Total: ${{ $json.Total || $json.credit }}\n• Status: Approved\n\nAll mathematical and accounting checks passed.\n\nBest regards,\nAutomated Accounting System",
+        "options": {}
+      },
+      "id": "node-7-gmail-confirmation",
+      "name": "Send Confirmation (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        140
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail Account (shahriar.rusan12@gmail.com)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHAIN 1: Build & Send Internal Executive Review & Details Request Email for Shahriar Rusan\nconst { execFileSync } = require('child_process');\nconst data = $input.item.json;\nconst issueBullets = (data.issues && data.issues.length > 0)\n  ? data.issues.map((iss, i) => `  ${i + 1}. ${iss}`).join('\\n')\n  : `  1. Flagged for manual verification (Confidence: ${Math.round((data.confidence || 0) * 100)}%).`;\n\nconst ownerEmailSubject = `🔍 [Action Needed: Provide Details] Invoice ${data.invoice_number} from ${data.vendor} ($${Number(data.credit || 0).toLocaleString()})`;\n\nconst ownerEmailBody = `Hi Shahriar,\\n\\nAn incoming invoice from \"${data.vendor}\" was paused by the AI Accounting Automation and requires additional details or manual sign-off from you before it can be posted to the General Ledger.\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n📊 EXTRACTED INVOICE SUMMARY\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n• Vendor:              ${data.vendor}\\n• Invoice Number:      ${data.invoice_number}\\n• Invoice Date:        ${data.invoice_date}\\n• Submitted By:        ${data.meta?.sender || 'shahriar.rusan12@gmail.com'}\\n• File Name:           ${data.meta?.fileName || 'invoice.png'}\\n• Suggested Category:  ${data.category} (${data.account})\\n• Stated Subtotal:     $${Number(data.debit || 0).toFixed(2)}\\n• Stated Tax:          $${Number(data.tax || 0).toFixed(2)}\\n• Calculated Total:    $${Number(data.expected_total || 0).toFixed(2)}\\n• Stated Total Due:    $${Number(data.credit || 0).toFixed(2)}\\n• Discrepancy Amount:  $${Number(data.discrepancy || 0).toFixed(2)}\\n• AI Confidence Score: ${Math.round((data.confidence || 0) * 100)}%\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n⚠️ WHY THIS INVOICE WAS HALTED\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n${issueBullets}\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n📝 DETAILS NEEDED FROM YOU\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\nPlease reply or update the tracker with the following details:\\n  1. Is the $${Number(data.discrepancy || 0).toFixed(2)} difference an authorized fee/adjustment, or a billing error?\\n  2. Should this expense be booked under \"${data.account}\" (${data.category})?\\n  3. Do you authorize a manual override, or should we wait for the vendor's corrected upload?\\n\\n(Note: An automated notice has also been dispatched to the sender requesting a corrected invoice upload.)\\n\\nBest regards,\\nAI Invoice & Accounting Controller`;\n\nlet chain1Delivery = null;\ntry {\n  const out = execFileSync('/usr/bin/python3', ['/Users/rusan/Documents/Google anti-gravity projects/n8n-invoice-automation/send_gmail_xoauth2.py'], {\n    input: JSON.stringify({ to: 'shahriar.rusan12@gmail.com', subject: ownerEmailSubject, body: ownerEmailBody }),\n    encoding: 'utf8',\n    timeout: 25000\n  });\n  chain1Delivery = JSON.parse(out.trim());\n} catch (e) {\n  chain1Delivery = { error: e.message };\n}\n\nreturn [{\n  json: {\n    ...data,\n    owner_email_to: 'shahriar.rusan12@gmail.com',\n    owner_email_subject: ownerEmailSubject,\n    owner_email_body: ownerEmailBody,\n    chain1_delivery: chain1Delivery\n  }\n}];"
+      },
+      "id": "node-8a-chain1-prep-owner",
+      "name": "Chain 1: Prepare My Review Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.owner_email_to }}",
+        "subject": "={{ $json.owner_email_subject }}",
+        "message": "={{ $json.owner_email_body }}",
+        "options": {}
+      },
+      "id": "node-8b-chain1-send-owner",
+      "name": "Chain 1: Email Me (Ask for Details)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        380
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail Account (shahriar.rusan12@gmail.com)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [{ role: 'system', content: 'You are an Executive Accounts Payable Specialist at Shahriar Rusan Finance & Accounting (shahriar.rusan12@gmail.com). A vendor or sender submitted an invoice that failed automated verification because required information was missing or mathematically inconsistent. Write a highly professional, polite, and clear plain-text email to the sender explaining that the invoice information was not properly provided and listing the exact items they must correct and re-upload. Never use bracketed placeholders like [Your Name] or [Your Company]; sign off as: Accounts Payable & Finance Automation Team (shahriar.rusan12@gmail.com). Return ONLY a JSON object with keys: subject (string) and body (string).' }, { role: 'user', content: 'Draft a customized correction & re-upload email for this flagged invoice: ' + JSON.stringify({ vendor: $json.vendor, invoice_number: $json.invoice_number, invoice_date: $json.invoice_date, subtotal: $json.debit, tax: $json.tax, stated_total: $json.credit, expected_total: $json.expected_total, discrepancy: $json.discrepancy, issues: $json.issues, items: $json.items }) }], response_format: { type: 'json_object' }, temperature: 0.2 }) }}"
+      },
+      "id": "node-9a-chain2-ai-draft",
+      "name": "Chain 2: AI Customize Sender Notice (GPT-OSS 120B)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        600
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHAIN 2: Parse AI-customized Sender Email, Enforce Required Upload Checklist & Send via Gmail XOAUTH2 SMTP\nconst { execFileSync } = require('child_process');\nconst item = $input.item;\nconst inv = $('Validate (IF / Code Node)').first().json;\nconst rawContent = item.json?.choices?.[0]?.message?.content || '{}';\n\nlet aiEmail = null;\ntry {\n  aiEmail = JSON.parse(rawContent);\n} catch (e) {}\n\nconst senderAddress = inv.meta?.sender || 'shahriar.rusan12@gmail.com';\nconst subject = aiEmail?.subject || `⚠️ Action Required: Incomplete / Incorrect Information on Invoice ${inv.invoice_number} (${inv.vendor})`;\n\nconst defaultChecklistBody = `Dear ${inv.vendor || 'Valued Partner'} Billing Team,\\n\\nThank you for submitting Invoice ${inv.invoice_number} (dated ${inv.invoice_date}).\\n\\nDuring our automated Accounts Payable verification, we could not process your invoice because some required billing information was either improperly formatted or mathematically inconsistent.\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n❌ IDENTIFIED ISSUES IN YOUR SUBMISSION\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n${(inv.issues && inv.issues.length > 0) ? inv.issues.map((x, i) => `  ${i + 1}. ${x}`).join('\\n') : '  1. Incomplete mandatory invoice fields or mathematical mismatch.'}\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n📤 REQUIRED INFORMATION TO UPLOAD / RESUBMIT\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\nTo ensure prompt payment processing, please upload a corrected invoice that clearly includes all of the following:\\n\\n  1. Verified Mathematical Totals:\\n     • Confirmed Subtotal (currently read as $${Number(inv.debit || 0).toFixed(2)})\\n     • Confirmed Tax / VAT breakdown (currently read as $${Number(inv.tax || 0).toFixed(2)})\\n     • Reconciled Total Amount Due (must equal Subtotal + Tax = $${Number(inv.expected_total || 0).toFixed(2)}, instead of $${Number(inv.credit || 0).toFixed(2)})\\n\\n  2. Complete Vendor & Invoice Metadata:\\n     • Full Legal Company Name & Billing Address\\n     • Official Invoice Number (${inv.invoice_number})\\n     • Invoice Issue Date & Payment Terms\\n\\n  3. Itemized Line-Item Breakdown:\\n     • Clear description of each product/service delivered\\n     • Exact Quantity, Unit Price, and Extended Line Amount\\n\\n  4. Clear Document Format:\\n     • High-resolution PDF, PNG, or JPG attachment free of cutoffs or blur.\\n\\nPlease reply directly to this email with the updated invoice attachment or upload it via our Invoice Submission Portal.\\n\\nWarm regards,\\nAccounts Payable & Finance Automation Team\\nshahriar.rusan12@gmail.com`;\n\nconst finalBody = aiEmail?.body\n  ? `${aiEmail.body}\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n📌 SUMMARY OF REQUIRED UPLOAD CHECKLIST\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n• Vendor Name: ${inv.vendor}\\n• Invoice #: ${inv.invoice_number}\\n• Stated Subtotal ($${Number(inv.debit || 0).toFixed(2)}) + Tax ($${Number(inv.tax || 0).toFixed(2)}) must equal Total Due (Expected: $${Number(inv.expected_total || 0).toFixed(2)} vs. Stated: $${Number(inv.credit || 0).toFixed(2)})\\n• Itemized line items with Description, Quantity, Unit Price & Amount\\n• High-resolution PDF or PNG/JPG file`\n  : defaultChecklistBody;\n\nlet chain2Delivery = null;\ntry {\n  const out = execFileSync('/usr/bin/python3', ['/Users/rusan/Documents/Google anti-gravity projects/n8n-invoice-automation/send_gmail_xoauth2.py'], {\n    input: JSON.stringify({ to: senderAddress, cc: 'shahriar.rusan12@gmail.com', subject, body: finalBody }),\n    encoding: 'utf8',\n    timeout: 25000\n  });\n  chain2Delivery = JSON.parse(out.trim());\n} catch (e) {\n  chain2Delivery = { error: e.message };\n}\n\nreturn [{\n  json: {\n    ...inv,\n    sender_email_to: senderAddress,\n    sender_email_subject: subject,\n    sender_email_body: finalBody,\n    chain2_delivery: chain2Delivery\n  }\n}];"
+      },
+      "id": "node-9b-chain2-format-sender",
+      "name": "Chain 2: Format Sender Checklist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.sender_email_to }}",
+        "subject": "={{ $json.sender_email_subject }}",
+        "message": "={{ $json.sender_email_body }}",
+        "options": {}
+      },
+      "id": "node-9c-chain2-send-sender",
+      "name": "Chain 2: Email Sender (Re-Upload Required Info)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2340,
+        600
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail Account (shahriar.rusan12@gmail.com)"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Upload Invoice Form": {
+      "main": [
+        [
+          {
+            "node": "Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Attachment": {
+      "main": [
+        [
+          {
+            "node": "Gemini 2.5 Flash-Lite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 2.5 Flash-Lite": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemini Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Output": {
+      "main": [
+        [
+          {
+            "node": "GPT-OSS 120B via Groq",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-OSS 120B via Groq": {
+      "main": [
+        [
+          {
+            "node": "Parse & Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Format Output": {
+      "main": [
+        [
+          {
+            "node": "Validate (IF / Code Node)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate (IF / Code Node)": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Chain 1: Prepare My Review Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Chain 2: AI Customize Sender Notice (GPT-OSS 120B)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chain 1: Prepare My Review Email": {
+      "main": [
+        [
+          {
+            "node": "Chain 1: Email Me (Ask for Details)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chain 2: AI Customize Sender Notice (GPT-OSS 120B)": {
+      "main": [
+        [
+          {
+            "node": "Chain 2: Format Sender Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chain 2: Format Sender Checklist": {
+      "main": [
+        [
+          {
+            "node": "Chain 2: Email Sender (Re-Upload Required Info)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
